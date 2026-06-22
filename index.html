@@ -18,9 +18,15 @@
         input[type="text"], input[type="number"] { width: 85%; padding: 14px; font-size: 20px; text-align: center; border-radius: 8px; margin-bottom: 12px; background: #0b132b; color: #fff; border: 2px solid var(--gold); }
         .status-board { background: #0b132b; border: 2px dashed var(--highlight); padding: 15px; border-radius: 8px; font-size: 22px; font-weight: bold; margin: 15px 0; line-height: 1.4; }
         .winner-zone { background: #6fffe9; color: #0b132b; padding: 20px; border-radius: 12px; font-weight: bold; font-size: 22px; margin: 15px 0; box-shadow: 0 0 15px rgba(111,255,233,0.6); }
-        .player-wall { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; }
-        .p-card { padding: 8px 14px; border-radius: 6px; font-size: 15px; font-weight: bold; background: #3a506b; color: #fff; }
-        .p-voted { background: #5bc0be; color: #0b132b; }
+        
+        .player-wall { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; max-height: 300px; overflow-y: auto; }
+        .p-card { padding: 10px 15px; border-radius: 8px; font-size: 16px; font-weight: bold; background: #3a506b; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+        .p-voted { background: #5bc0be; color: #0b132b; border: 1px solid #6fffe9; }
+        .p-diff-tag { font-size: 13px; background: rgba(0,0,0,0.2); padding: 3px 8px; border-radius: 4px; }
+        
+        /* 贏家專屬動態金光效果 */
+        .king-box { background: #f39c12 !important; color: #fff !important; font-size: 18px; margin-top: 12px; font-weight: bold; padding: 12px; border-radius: 6px; box-shadow: 0 0 15px #f1c40f; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
     </style>
 </head>
 <body>
@@ -57,7 +63,7 @@
         
         <div style="background: #0b132b; padding: 15px; border-radius: 8px; text-align: left; margin-top: 20px; border: 1px solid #3a506b;">
             <div id="host-ans-display" style="font-size: 20px; font-weight: bold; color: var(--highlight); text-align: center; margin-bottom: 10px;"></div>
-            <div style="font-size: 14px; color: #a5a1b8; margin-bottom: 5px;">👥 現場名單狀況（綠色代表已交卷）：</div>
+            <div id="host-wall-title" style="font-size: 14px; color: #a5a1b8; margin-bottom: 5px;">👥 現場實時通靈榜（依接近程度排序）：</div>
             <div id="host-player-wall" class="player-wall"></div>
         </div>
     </div>
@@ -91,6 +97,7 @@
         const db = firebase.database();
 
         let currentRole = ''; let roomRef = null; let myRoomCode = ''; let myPlayerId = '';
+        let currentTargetNumber = 0;
 
         function chooseRole(role) {
             if(role === 'host') {
@@ -119,7 +126,6 @@
             if(!name) return alert('請輸入您的稱呼！');
             
             myRoomCode = roomCode; 
-            // 獨立的 guess_rooms 路徑，與少數決完全分開
             roomRef = db.ref('guess_rooms/' + myRoomCode);
             
             if(currentRole === 'host') {
@@ -148,6 +154,7 @@
             const targetNum = parseInt(document.getElementById('host-target-input').value);
             if(!targetNum || targetNum < 1 || targetNum > 999) return alert('請輸入正確的 1~999 黃金數字！');
             
+            currentTargetNumber = targetNum;
             roomRef.child('gameStatus').update({ state: 'voting', targetNumber: targetNum, winnerText: '' });
             roomRef.child('players').once('value', (snap) => {
                 const players = snap.val() || {};
@@ -199,37 +206,67 @@
             if(!confirm("確定要重置這間房間，清除所有人嗎？")) return;
             document.getElementById('host-target-input').value = '';
             document.getElementById('host-ans-display').innerText = '';
+            currentTargetNumber = 0;
             roomRef.child('gameStatus').set({ state: 'setup', targetNumber: 0, winnerText: '' });
             roomRef.child('players').remove();
         }
 
         function startHostListening() {
+            roomRef.child('gameStatus').on('value', (snapshot) => {
+                const status = snapshot.val() || {};
+                currentTargetNumber = status.targetNumber || 0;
+                
+                if(status.state === 'revealed' && status.winnerText) {
+                    document.getElementById('host-ans-display').innerText = status.winnerText;
+                    document.getElementById('host-wall-title').innerText = "🏆 最終通靈排行榜（由近到遠）：";
+                } else {
+                    document.getElementById('host-ans-display').innerText = "🎮 遊戲進行中...";
+                    document.getElementById('host-wall-title').innerText = "👥 現場實時通靈榜（依接近程度排序）：";
+                }
+            });
+
             roomRef.child('players').on('value', (snapshot) => {
                 const players = snapshot.val() || {};
                 const wall = document.getElementById('host-player-wall');
                 wall.innerHTML = '';
                 
                 let totalCount = 0; let votedCount = 0;
+                let playerList = [];
+
                 for(let id in players) {
-                    totalCount++; const p = players[id];
-                    if(p.voted) {
+                    totalCount++;
+                    const p = players[id];
+                    let diff = 9999;
+                    if(p.voted && currentTargetNumber > 0) {
                         votedCount++;
-                        wall.innerHTML += `<div class="p-card p-voted">${p.name}</div>`;
-                    } else {
-                        wall.innerHTML += `<div class="p-card">${p.name}</div>`;
+                        diff = Math.abs(parseInt(p.guess) - currentTargetNumber);
                     }
+                    playerList.push({ name: p.name, voted: p.voted, guess: p.guess, diff: diff });
                 }
+
+                playerList.sort((a, b) => {
+                    if (a.voted && !b.voted) return -1;
+                    if (!a.voted && b.voted) return 1;
+                    return a.diff - b.diff;
+                });
+
+                playerList.forEach(p => {
+                    if(p.voted) {
+                        let diffDisplay = currentTargetNumber > 0 ? `(差 ${p.diff})` : `(已交卷)`;
+                        wall.innerHTML += `<div class="p-card p-voted">
+                            <span>👤 ${p.name} <span style="font-size:13px; opacity:0.8;">猜 ${p.guess}</span></span>
+                            <span class="p-diff-tag">${diffDisplay}</span>
+                        </div>`;
+                    } else {
+                        wall.innerHTML += `<div class="p-card">
+                            <span>👤 ${p.name}</span>
+                            <span class="p-diff-tag" style="background:rgba(255,255,255,0.1); color:#aaa;">思考中</span>
+                        </div>`;
+                    }
+                });
+
                 document.getElementById('host-join-count').innerText = totalCount;
                 document.getElementById('host-voted-count').innerText = votedCount;
-            });
-
-            roomRef.child('gameStatus').on('value', (snapshot) => {
-                const status = snapshot.val() || {};
-                if(status.state === 'revealed' && status.winnerText) {
-                    document.getElementById('host-ans-display').innerText = status.winnerText;
-                } else {
-                    document.getElementById('host-ans-display').innerText = "🎮 遊戲進行中...";
-                }
             });
         }
 
@@ -256,6 +293,7 @@
                 const waitMsg = document.getElementById('wait-msg');
                 const bigResult = document.getElementById('big-result-zone');
                 const pStatus = document.getElementById('player-status');
+                const target = status.targetNumber || 0;
 
                 if(status.state === 'setup') {
                     sBoard.innerText = "🎬 主辦人正在心中思考黃金數字，請稍候...";
@@ -284,12 +322,41 @@
                     sBoard.innerText = "🏁 本輪通靈結果揭曉！";
                     pStatus.innerText = "🏁 已開牌"; pStatus.style.background = "#9b59b6";
 
-                    roomRef.child('players').child(myPlayerId).once('value', (pSnap) => {
-                        const me = pSnap.val() || {};
-                        const myNumText = me.voted ? `您本輪猜的數字是：【${me.guess}】` : `您本輪【未交卷/棄權】`;
-                        bigResult.innerHTML = `<div>${status.winnerText.replace(/\n/g, '<br>')}</div>
-                                               <div style="font-size:14px; margin-top:10px; opacity:0.8;">${myNumText}</div>`;
-                        bigResult.classList.remove('hidden');
+                    // 1. 先去抓全場數據，看最低的差距是多少
+                    roomRef.child('players').once('value', (allPlayersSnap) => {
+                        const allPlayers = allPlayersSnap.val() || {};
+                        let minDiff = 9999;
+
+                        for(let id in allPlayers) {
+                            if(allPlayers[id].voted) {
+                                let d = Math.abs(parseInt(allPlayers[id].guess) - target);
+                                if(d < minDiff) minDiff = d;
+                            }
+                        }
+
+                        // 2. 比對目前玩家是不是最低差距的那位
+                        roomRef.child('players').child(myPlayerId).once('value', (pSnap) => {
+                            const me = pSnap.val() || {};
+                            let myNumText = "";
+                            let isWinner = false;
+
+                            if(me.voted) {
+                                let myDiff = Math.abs(parseInt(me.guess) - target);
+                                // 如果自己的差距剛好等於全場最低差距，代表自己就是贏家！
+                                if(myDiff === minDiff) {
+                                    isWinner = true;
+                                    myNumText = `<div class="king-box">👑 恭喜您！您是本輪的【終極通靈王】！<br><span style="font-size:14px;">您猜的 ${me.guess} 與答案只差 ${myDiff}！</span></div>`;
+                                } else {
+                                    myNumText = `<div style="font-size:15px; font-weight:bold; color:#0b132b; background:rgba(255,255,255,0.6); padding:8px; border-radius:6px;">您本輪猜的數字是：【${me.guess}】 ➔ （與主辦人數字相差 ${myDiff}）</div>`;
+                                }
+                            } else {
+                                myNumText = `<div style="font-size:15px; color:#666; background:rgba(255,255,255,0.4); padding:8px; border-radius:6px;">您本輪【未交卷/棄權】</div>`;
+                            }
+                            
+                            bigResult.innerHTML = `<div>${status.winnerText.replace(/\n/g, '<br>')}</div>
+                                                   <div style="margin-top:12px;">${myNumText}</div>`;
+                            bigResult.classList.remove('hidden');
+                        });
                     });
                 }
             });
