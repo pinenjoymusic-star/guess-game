@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>《黃金通靈王》・猜數字爭奪戰</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        :root { --bg: #0b132b; --card: #1c2541; --gold: #5bc0be; --highlight: #6fffe9; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: #fff; text-align: center; padding: 10px; margin: 0; }
+        .box { max-width: 600px; margin: 15px auto; background: var(--card); padding: 25px; border-radius: 16px; border: 2px solid var(--gold); box-sizing: border-box; box-shadow: 0 4px 20px rgba(91,192,190,0.2); }
+        h1 { color: var(--highlight); font-size: 28px; margin-top:0; letter-spacing: 1px; }
+        .btn { width: 90%; padding: 16px; margin: 12px 0; font-size: 19px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; color: #0b132b; background: var(--highlight); transition: 0.2s; }
+        .btn:active { transform: scale(0.98); opacity: 0.9; }
+        .hidden { display: none !important; }
+        .badge { background: #3a506b; padding: 6px 14px; border-radius: 20px; font-size: 14px; display: inline-block; margin-bottom: 10px; color: #fff; }
+        input[type="text"], input[type="number"] { width: 85%; padding: 14px; font-size: 20px; text-align: center; border-radius: 8px; margin-bottom: 12px; background: #0b132b; color: #fff; border: 2px solid var(--gold); }
+        .status-board { background: #0b132b; border: 2px dashed var(--highlight); padding: 15px; border-radius: 8px; font-size: 22px; font-weight: bold; margin: 15px 0; line-height: 1.4; }
+        .winner-zone { background: #6fffe9; color: #0b132b; padding: 20px; border-radius: 12px; font-weight: bold; font-size: 22px; margin: 15px 0; box-shadow: 0 0 15px rgba(111,255,233,0.6); }
+        .player-wall { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; }
+        .p-card { padding: 8px 14px; border-radius: 6px; font-size: 15px; font-weight: bold; background: #3a506b; color: #fff; }
+        .p-voted { background: #5bc0be; color: #0b132b; }
+    </style>
+</head>
+<body>
+
+    <div id="role-screen" class="box">
+        <h1>🔮《黃金通靈王》<br>1 ~ 999 數字爭奪戰</h1>
+        <p style="color: #a5a1b8; font-size: 15px;">請選擇您在該裝置的身分：</p>
+        <button class="btn" style="background:#3a506b; color:#fff;" onclick="chooseRole('host')">我是主辦人 (上帝視角控台)</button>
+        <button class="btn" onclick="chooseRole('player')">我是參賽者 (手機端輸入)</button>
+    </div>
+
+    <div id="input-screen" class="box hidden">
+        <h1 id="input-title">初始化遊戲</h1>
+        <input type="text" id="room-id" placeholder="請輸入 4 位數房間碼" maxlength="4" pattern="\d*"><br>
+        <input type="text" id="player-name" placeholder="請輸入您的名字/綽號"><br>
+        <button class="btn" onclick="submitInput()">確認進入房間</button>
+    </div>
+
+    <div id="host-screen" class="box hidden">
+        <h1>👑 上帝數字主控台</h1>
+        <div style="font-size: 24px; color: var(--highlight); font-weight: bold;">房間代碼：<span id="host-room-id">----</span></div>
+        <hr style="border-color:#3a506b; margin: 15px 0;">
+        
+        <div style="background: #111a36; padding: 20px; border-radius: 12px; border: 1px solid var(--gold); margin-bottom: 15px;">
+            <p style="margin: 0 0 10px 0; color: var(--highlight); font-weight: bold; text-align: left;">🎯 請在心中決定你的黃金數字 (1~999)：</p>
+            <input type="number" id="host-target-input" placeholder="請輸入 1 ~ 999" min="1" max="999">
+            <button class="btn" style="margin: 0; width: 60%; background: #eb984e; color: #000;" onclick="startNewRound()">📢 開放台下下注！</button>
+        </div>
+
+        <p style="font-size: 18px;">目前已加入：<span id="host-join-count" style="color:var(--highlight); font-weight:bold;">0</span> 人 | 已交卷：<span id="host-voted-count" style="color:#2ecc71; font-weight:bold;">0</span> 人</p>
+        
+        <button class="btn" style="background:#2ecc71; color: #000;" onclick="revealResults()">🏁 截止下注！當場開牌！</button>
+        <button class="btn" style="background:#3a506b; color:#fff;" onclick="resetWholeGame()">🔄 全局清空重來</button>
+        
+        <div style="background: #0b132b; padding: 15px; border-radius: 8px; text-align: left; margin-top: 20px; border: 1px solid #3a506b;">
+            <div id="host-ans-display" style="font-size: 20px; font-weight: bold; color: var(--highlight); text-align: center; margin-bottom: 10px;"></div>
+            <div style="font-size: 14px; color: #a5a1b8; margin-bottom: 5px;">👥 現場名單狀況（綠色代表已交卷）：</div>
+            <div id="host-player-wall" class="player-wall"></div>
+        </div>
+    </div>
+
+    <div id="player-screen" class="box hidden">
+        <h1>參賽者: <span id="display-name" style="color:var(--highlight);"></span></h1>
+        <div id="player-status" class="badge">等待主辦人</div>
+        
+        <div id="player-status-board" class="status-board">🎬 請等待主辦人開啟新一輪遊戲...</div>
+        <div id="big-result-zone" class="winner-zone hidden"></div>
+        
+        <div id="guess-area" class="hidden">
+            <p style="color:#a5a1b8; font-weight:bold; font-size:16px;">請預測主辦人的黃金數字 (1 ~ 999)：</p>
+            <input type="number" id="player-guess-input" placeholder="請輸入 1 ~ 999" min="1" max="999"><br>
+            <button class="btn" onclick="castGuess()">🔮 鎖定通靈答案，送出！</button>
+        </div>
+        
+        <div id="wait-msg" class="hidden">
+            <div style="color:#5bc0be; font-size:24px; font-weight:bold; margin: 20px 0;">✓ 答案已秘密封存！</div>
+            <p style="color:#a5a1b8; font-size:16px;">您猜的數字是：<span id="my-saved-num" style="color:#fff; font-size:22px; font-weight:bold;">--</span></p>
+            <p style="color:#a5a1b8; font-size:14px;">請看前方大螢幕，等待主辦人截止開牌！</p>
+        </div>
+    </div>
+
+    <script>
+        // 🛠️ 請在下方引號內貼上你的 Firebase 即時資料庫網址
+        const FIREBASE_DB_URL = "https://lala-party-2026-default-rtdb.firebaseio.com/";
+        const HOST_PASSWORD = "lala2026";
+
+        firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
+        const db = firebase.database();
+
+        let currentRole = ''; let roomRef = null; let myRoomCode = ''; let myPlayerId = '';
+
+        function chooseRole(role) {
+            if(role === 'host') {
+                const pass = prompt("請輸入主辦人認證密碼：");
+                if(pass !== HOST_PASSWORD) { alert("密碼錯誤！"); return; }
+            }
+            currentRole = role;
+            document.getElementById('role-screen').classList.add('hidden');
+            document.getElementById('input-screen').classList.remove('hidden');
+            
+            if(role === 'host') {
+                document.getElementById('input-title').innerText = "主辦人開啟房間";
+                document.getElementById('player-name').value = "主辦方";
+                document.getElementById('player-name').classList.add('hidden');
+            } else {
+                document.getElementById('input-title').innerText = "通靈參賽者進場";
+                document.getElementById('player-name').classList.remove('hidden');
+            }
+        }
+
+        function submitInput() {
+            const roomCode = document.getElementById('room-id').value.trim();
+            const name = document.getElementById('player-name').value.trim().replace(/[.#$/\[\]]/g, '');
+            
+            if(!roomCode || roomCode.length !== 4) return alert('請輸入自訂的 4 位數房間碼！');
+            if(!name) return alert('請輸入您的稱呼！');
+            
+            myRoomCode = roomCode; 
+            // 獨立的 guess_rooms 路徑，與少數決完全分開
+            roomRef = db.ref('guess_rooms/' + myRoomCode);
+            
+            if(currentRole === 'host') {
+                roomRef.remove().then(() => {
+                    roomRef.child('gameStatus').set({ state: 'setup', targetNumber: 0, winnerText: '' });
+                    document.getElementById('input-screen').classList.add('hidden');
+                    document.getElementById('host-screen').classList.remove('hidden');
+                    document.getElementById('host-room-id').innerText = myRoomCode;
+                    startHostListening();
+                });
+            } else {
+                myPlayerId = name; 
+                roomRef.child('players').child(myPlayerId).once('value', (snapshot) => {
+                    if (!snapshot.exists()) {
+                        roomRef.child('players').child(myPlayerId).set({ name: name, guess: '', voted: false });
+                    }
+                    document.getElementById('input-screen').classList.add('hidden');
+                    document.getElementById('player-screen').classList.remove('hidden');
+                    document.getElementById('display-name').innerText = name;
+                    startPlayerListening();
+                });
+            }
+        }
+
+        function startNewRound() {
+            const targetNum = parseInt(document.getElementById('host-target-input').value);
+            if(!targetNum || targetNum < 1 || targetNum > 999) return alert('請輸入正確的 1~999 黃金數字！');
+            
+            roomRef.child('gameStatus').update({ state: 'voting', targetNumber: targetNum, winnerText: '' });
+            roomRef.child('players').once('value', (snap) => {
+                const players = snap.val() || {};
+                for(let id in players) { roomRef.child('players').child(id).update({ guess: '', voted: false }); }
+            });
+            alert("已開放台下作答！");
+        }
+
+        function revealResults() {
+            roomRef.child('gameStatus').once('value', (gSnap) => {
+                const status = gSnap.val() || {};
+                if(status.state !== 'voting') return alert('尚未開啟任何一輪遊戲，或是已經開過牌了！');
+                const target = status.targetNumber;
+
+                roomRef.child('players').once('value', (pSnap) => {
+                    const players = pSnap.val() || {};
+                    let bestDiff = 9999; let winners = [];
+
+                    for(let id in players) {
+                        if(players[id].voted) {
+                            let pGuess = parseInt(players[id].guess);
+                            let diff = Math.abs(pGuess - target);
+                            if(diff < bestDiff) {
+                                bestDiff = diff;
+                                winners = [{name: players[id].name, guess: pGuess}];
+                            } else if (diff === bestDiff) {
+                                winners.push({name: players[id].name, guess: pGuess});
+                            }
+                        }
+                    }
+
+                    let winText = "";
+                    if(winners.length === 0) {
+                        winText = `💥 現場居然沒有任何人下注！主辦人的數字是【${target}】。`;
+                    } else {
+                        winText = `🎉 主辦人數字是【${target}】！\n👑 終極通靈王：`;
+                        winners.forEach(w => {
+                            winText += `【${w.name}】猜 ${w.guess} (只差 ${bestDiff})！ `;
+                        });
+                    }
+
+                    roomRef.child('gameStatus').update({ state: 'revealed', winnerText: winText });
+                    alert("開牌成功！");
+                });
+            });
+        }
+
+        function resetWholeGame() {
+            if(!confirm("確定要重置這間房間，清除所有人嗎？")) return;
+            document.getElementById('host-target-input').value = '';
+            document.getElementById('host-ans-display').innerText = '';
+            roomRef.child('gameStatus').set({ state: 'setup', targetNumber: 0, winnerText: '' });
+            roomRef.child('players').remove();
+        }
+
+        function startHostListening() {
+            roomRef.child('players').on('value', (snapshot) => {
+                const players = snapshot.val() || {};
+                const wall = document.getElementById('host-player-wall');
+                wall.innerHTML = '';
+                
+                let totalCount = 0; let votedCount = 0;
+                for(let id in players) {
+                    totalCount++; const p = players[id];
+                    if(p.voted) {
+                        votedCount++;
+                        wall.innerHTML += `<div class="p-card p-voted">${p.name}</div>`;
+                    } else {
+                        wall.innerHTML += `<div class="p-card">${p.name}</div>`;
+                    }
+                }
+                document.getElementById('host-join-count').innerText = totalCount;
+                document.getElementById('host-voted-count').innerText = votedCount;
+            });
+
+            roomRef.child('gameStatus').on('value', (snapshot) => {
+                const status = snapshot.val() || {};
+                if(status.state === 'revealed' && status.winnerText) {
+                    document.getElementById('host-ans-display').innerText = status.winnerText;
+                } else {
+                    document.getElementById('host-ans-display').innerText = "🎮 遊戲進行中...";
+                }
+            });
+        }
+
+        function castGuess() {
+            const guessInput = document.getElementById('player-guess-input');
+            const num = parseInt(guessInput.value);
+            if(!num || num < 1 || num > 999) return alert('請輸入 1 到 999 之間的整數數字！');
+
+            document.getElementById('guess-area').classList.add('hidden');
+            document.getElementById('wait-msg').classList.remove('hidden');
+            document.getElementById('my-saved-num').innerText = num;
+            
+            const pStatus = document.getElementById('player-status');
+            pStatus.innerText = "✓ 已秘密交卷"; pStatus.style.background = "#2ecc71";
+
+            roomRef.child('players').child(myPlayerId).update({ guess: num, voted: true });
+        }
+
+        function startPlayerListening() {
+            roomRef.child('gameStatus').on('value', (snapshot) => {
+                const status = snapshot.val() || {};
+                const sBoard = document.getElementById('player-status-board');
+                const guessArea = document.getElementById('guess-area');
+                const waitMsg = document.getElementById('wait-msg');
+                const bigResult = document.getElementById('big-result-zone');
+                const pStatus = document.getElementById('player-status');
+
+                if(status.state === 'setup') {
+                    sBoard.innerText = "🎬 主辦人正在心中思考黃金數字，請稍候...";
+                    guessArea.classList.add('hidden'); waitMsg.classList.add('hidden'); bigResult.classList.add('hidden');
+                    pStatus.innerText = "等待中"; pStatus.style.background = "#3a506b";
+
+                } else if(status.state === 'voting') {
+                    sBoard.innerText = "⚡ 1 ~ 999 時空通道已開啟！請在下方寫下你的通靈數字！";
+                    bigResult.classList.add('hidden');
+                    
+                    roomRef.child('players').child(myPlayerId).once('value', (pSnap) => {
+                        const me = pSnap.val() || {};
+                        if(me.voted) {
+                            guessArea.classList.add('hidden'); waitMsg.classList.remove('hidden');
+                            document.getElementById('my-saved-num').innerText = me.guess;
+                            pStatus.innerText = "✓ 已秘密交卷"; pStatus.style.background = "#2ecc71";
+                        } else {
+                            guessArea.classList.remove('hidden'); waitMsg.classList.add('hidden');
+                            document.getElementById('player-guess-input').value = '';
+                            pStatus.innerText = "🔥 請作答"; pStatus.style.background = "#e67e22";
+                        }
+                    });
+
+                } else if(status.state === 'revealed') {
+                    guessArea.classList.add('hidden'); waitMsg.classList.add('hidden');
+                    sBoard.innerText = "🏁 本輪通靈結果揭曉！";
+                    pStatus.innerText = "🏁 已開牌"; pStatus.style.background = "#9b59b6";
+
+                    roomRef.child('players').child(myPlayerId).once('value', (pSnap) => {
+                        const me = pSnap.val() || {};
+                        const myNumText = me.voted ? `您本輪猜的數字是：【${me.guess}】` : `您本輪【未交卷/棄權】`;
+                        bigResult.innerHTML = `<div>${status.winnerText.replace(/\n/g, '<br>')}</div>
+                                               <div style="font-size:14px; margin-top:10px; opacity:0.8;">${myNumText}</div>`;
+                        bigResult.classList.remove('hidden');
+                    });
+                }
+            });
+        }
+    </script>
+</body>
+</html>
