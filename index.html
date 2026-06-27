@@ -17,15 +17,15 @@
         .badge { background: #3a506b; padding: 6px 14px; border-radius: 20px; font-size: 14px; display: inline-block; margin-bottom: 10px; color: #fff; }
         input[type="text"], input[type="number"] { width: 85%; padding: 14px; font-size: 20px; text-align: center; border-radius: 8px; margin-bottom: 12px; background: #0b132b; color: #fff; border: 2px solid var(--gold); }
         .status-board { background: #0b132b; border: 2px dashed var(--highlight); padding: 15px; border-radius: 8px; font-size: 22px; font-weight: bold; margin: 15px 0; line-height: 1.4; }
-        .winner-zone { background: #6fffe9; color: #0b132b; padding: 20px; border-radius: 12px; font-weight: bold; font-size: 22px; margin: 15px 0; box-shadow: 0 0 15px rgba(111,255,233,0.6); }
+        .winner-zone { background: #6fffe9; color: #0b132b; padding: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; margin: 15px 0; box-shadow: 0 0 15px rgba(111,255,233,0.6); text-align: left; }
         
         .player-wall { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; max-height: 300px; overflow-y: auto; }
         .p-card { padding: 10px 15px; border-radius: 8px; font-size: 16px; font-weight: bold; background: #3a506b; color: #fff; display: flex; justify-content: space-between; align-items: center; }
         .p-voted { background: #5bc0be; color: #0b132b; border: 1px solid #6fffe9; }
         .p-diff-tag { font-size: 13px; background: rgba(0,0,0,0.2); padding: 3px 8px; border-radius: 4px; }
         
-        /* 贏家專屬動態金光效果 */
-        .king-box { background: #f39c12 !important; color: #fff !important; font-size: 18px; margin-top: 12px; font-weight: bold; padding: 12px; border-radius: 6px; box-shadow: 0 0 15px #f1c40f; animation: pulse 1.5s infinite; }
+        /* 榮耀稱號區 */
+        .king-box { background: #f39c12 !important; color: #fff !important; font-size: 18px; margin-top: 12px; font-weight: bold; padding: 12px; border-radius: 6px; box-shadow: 0 0 15px #f1c40f; text-align: center; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
     </style>
 </head>
@@ -62,7 +62,7 @@
         <button class="btn" style="background:#3a506b; color:#fff;" onclick="resetWholeGame()">🔄 全局清空重來</button>
         
         <div style="background: #0b132b; padding: 15px; border-radius: 8px; text-align: left; margin-top: 20px; border: 1px solid #3a506b;">
-            <div id="host-ans-display" style="font-size: 20px; font-weight: bold; color: var(--highlight); text-align: center; margin-bottom: 10px;"></div>
+            <div id="host-ans-display" style="font-size: 18px; font-weight: bold; color: var(--highlight); margin-bottom: 10px; line-height: 1.5;"></div>
             <div id="host-wall-title" style="font-size: 14px; color: #a5a1b8; margin-bottom: 5px;">👥 現場實時通靈榜（依接近程度排序）：</div>
             <div id="host-player-wall" class="player-wall"></div>
         </div>
@@ -163,6 +163,7 @@
             alert("已開放台下作答！");
         }
 
+        // 核心邏輯修改：主辦人點開牌時，直接計算並生成前三名的榮譽文字
         function revealResults() {
             roomRef.child('gameStatus').once('value', (gSnap) => {
                 const status = gSnap.val() || {};
@@ -171,29 +172,52 @@
 
                 roomRef.child('players').once('value', (pSnap) => {
                     const players = pSnap.val() || {};
-                    let bestDiff = 9999; let winners = [];
+                    let pList = [];
 
                     for(let id in players) {
                         if(players[id].voted) {
                             let pGuess = parseInt(players[id].guess);
                             let diff = Math.abs(pGuess - target);
-                            if(diff < bestDiff) {
-                                bestDiff = diff;
-                                winners = [{name: players[id].name, guess: pGuess}];
-                            } else if (diff === bestDiff) {
-                                winners.push({name: players[id].name, guess: pGuess});
-                            }
+                            pList.push({ name: players[id].name, guess: pGuess, diff: diff });
                         }
                     }
 
-                    let winText = "";
-                    if(winners.length === 0) {
-                        winText = `💥 現場居然沒有任何人下注！主辦人的數字是【${target}】。`;
-                    } else {
-                        winText = `🎉 主辦人數字是【${target}】！\n👑 終極通靈王：`;
-                        winners.forEach(w => {
-                            winText += `【${w.name}】猜 ${w.guess} (只差 ${bestDiff})！ `;
-                        });
+                    if(pList.length === 0) {
+                        roomRef.child('gameStatus').update({ state: 'revealed', winnerText: `💥 現場居然沒有任何人下注！主辦人的數字是【${target}】。` });
+                        return alert("開牌成功！");
+                    }
+
+                    // 由近到遠排序
+                    pList.sort((a, b) => a.diff - b.diff);
+
+                    // 分群計算名次（處理並列平手的狀況）
+                    let ranks = []; 
+                    let currentRank = 0;
+                    let lastDiff = -1;
+
+                    for(let i=0; i<pList.length; i++) {
+                        if(pList[i].diff !== lastDiff) {
+                            currentRank++;
+                            lastDiff = pList[i].diff;
+                        }
+                        if(currentRank > 3) break; // 只取前三名
+                        
+                        if(!ranks[currentRank]) ranks[currentRank] = [];
+                        ranks[currentRank].push(pList[i]);
+                    }
+
+                    // 組裝前三名頒獎台字串
+                    let winText = `<div style="text-align:center; font-size:22px; color:#fff; margin-bottom:10px;">🎯 正確答案是：<b style="color:#6fffe9; font-size:28px;">${target}</b></div>`;
+                    winText += `<div style="border-top:1px dashed #5bc0be; margin:8px 0;"></div>`;
+                    
+                    const medals = { 1: "👑 第一名 (通靈王)", 2: "🥈 第二名 (大通靈)", 3: "🥉 第三名 (小通靈)" };
+                    
+                    for(let r=1; r<=3; r++) {
+                        if(ranks[r] && ranks[r].length > 0) {
+                            winText += `<div style="margin: 6px 0;"><span style="color:#ffdd67; font-weight:bold;">${medals[r]}：</span>`;
+                            let members = ranks[r].map(p => `【${p.name}】猜 ${p.guess} (差 ${p.diff})`);
+                            winText += members.join(', ') + `</div>`;
+                        }
                     }
 
                     roomRef.child('gameStatus').update({ state: 'revealed', winnerText: winText });
@@ -217,8 +241,8 @@
                 currentTargetNumber = status.targetNumber || 0;
                 
                 if(status.state === 'revealed' && status.winnerText) {
-                    document.getElementById('host-ans-display').innerText = status.winnerText;
-                    document.getElementById('host-wall-title').innerText = "🏆 最終通靈排行榜（由近到遠）：";
+                    document.getElementById('host-ans-display').innerHTML = status.winnerText;
+                    document.getElementById('host-wall-title').innerText = "🏆 最終全場通靈榜（由近到遠）：";
                 } else {
                     document.getElementById('host-ans-display').innerText = "🎮 遊戲進行中...";
                     document.getElementById('host-wall-title').innerText = "👥 現場實時通靈榜（依接近程度排序）：";
@@ -322,38 +346,48 @@
                     sBoard.innerText = "🏁 本輪通靈結果揭曉！";
                     pStatus.innerText = "🏁 已開牌"; pStatus.style.background = "#9b59b6";
 
-                    // 1. 先去抓全場數據，看最低的差距是多少
+                    // 1. 先抓全場數據，整理出前三名的差距是多少
                     roomRef.child('players').once('value', (allPlayersSnap) => {
                         const allPlayers = allPlayersSnap.val() || {};
-                        let minDiff = 9999;
+                        let diffsSet = new Set();
 
                         for(let id in allPlayers) {
                             if(allPlayers[id].voted) {
-                                let d = Math.abs(parseInt(allPlayers[id].guess) - target);
-                                if(d < minDiff) minDiff = d;
+                                diffsSet.add(Math.abs(parseInt(allPlayers[id].guess) - target));
                             }
                         }
+                        
+                        // 將不重複的差距從小到大排，就能知道第1~3名的差距閥值是多少
+                        let sortedDiffs = Array.from(diffsSet).sort((a, b) => a - b);
+                        let rank1Diff = sortedDiffs[0] !== undefined ? sortedDiffs[0] : -1;
+                        let rank2Diff = sortedDiffs[1] !== undefined ? sortedDiffs[1] : -1;
+                        let rank3Diff = sortedDiffs[2] !== undefined ? sortedDiffs[2] : -1;
 
-                        // 2. 比對目前玩家是不是最低差距的那位
+                        // 2. 比對目前玩家拿到第幾名
                         roomRef.child('players').child(myPlayerId).once('value', (pSnap) => {
                             const me = pSnap.val() || {};
                             let myNumText = "";
-                            let isWinner = false;
 
                             if(me.voted) {
                                 let myDiff = Math.abs(parseInt(me.guess) - target);
-                                // 如果自己的差距剛好等於全場最低差距，代表自己就是贏家！
-                                if(myDiff === minDiff) {
-                                    isWinner = true;
-                                    myNumText = `<div class="king-box">👑 恭喜您！您是本輪的【終極通靈王】！<br><span style="font-size:14px;">您猜的 ${me.guess} 與答案只差 ${myDiff}！</span></div>`;
+                                
+                                // 比對自己是否進前三名
+                                if(myDiff === rank1Diff) {
+                                    myNumText = `<div class="king-box">👑 終極通靈王就是你！第一名！<br><span style="font-size:14px;">您猜 ${me.guess} 與答案只差 ${myDiff}！</span></div>`;
+                                } else if(myDiff === rank2Diff) {
+                                    myNumText = `<div class="king-box" style="background:#b4b4b4 !important; box-shadow: 0 0 15px #bdc3c7;">🥈 狂！榮登大通靈師第二名！<br><span style="font-size:14px;">您猜 ${me.guess} 與答案差 ${myDiff}！</span></div>`;
+                                } else if(myDiff === rank3Diff) {
+                                    myNumText = `<div class="king-box" style="background:#cd7f32 !important; box-shadow: 0 0 15px #d35400;">🥉 太神！榮登小通靈師第三名！<br><span style="font-size:14px;">您猜 ${me.guess} 與答案差 ${myDiff}！</span></div>`;
                                 } else {
-                                    myNumText = `<div style="font-size:15px; font-weight:bold; color:#0b132b; background:rgba(255,255,255,0.6); padding:8px; border-radius:6px;">您本輪猜的數字是：【${me.guess}】 ➔ （與主辦人數字相差 ${myDiff}）</div>`;
+                                    // 沒進前三名，顯示溫馨大眾版
+                                    myNumText = `<div style="font-size:15px; font-weight:bold; color:#0b132b; background:rgba(255,255,255,0.6); padding:8px; border-radius:6px;">您的本輪戰績：猜【${me.guess}】 ➔ （與主辦人數字相差 ${myDiff}，下次再接再厲！）</div>`;
                                 }
                             } else {
                                 myNumText = `<div style="font-size:15px; color:#666; background:rgba(255,255,255,0.4); padding:8px; border-radius:6px;">您本輪【未交卷/棄權】</div>`;
                             }
                             
-                            bigResult.innerHTML = `<div>${status.winnerText.replace(/\n/g, '<br>')}</div>
+                            // 將前三名名單跟個人成績一起渲染在手機畫面上
+                            bigResult.innerHTML = `<div>${status.winnerText}</div>
                                                    <div style="margin-top:12px;">${myNumText}</div>`;
                             bigResult.classList.remove('hidden');
                         });
